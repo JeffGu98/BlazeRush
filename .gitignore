@@ -1,0 +1,8 @@
+.godot/
+*.translation
+build/*.apk
+export_presets.cfg.bak
+*.keystore
+credentials.env
+*.pass
+.DS_Store
