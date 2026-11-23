@@ -15,7 +15,11 @@
 - Godot **4.7.x**
 - Android 导出见 [`docs/android-signing.md`](docs/android-signing.md)
 
-## 导出 APK
+## 发布与导出 APK
+
+正式 APK 通过推送与版本号一致的标签发布（例如 `v1.2.0`）。GitHub Actions 会用仓库 Secrets 里的同一把项目密钥签名，并挂到 [Releases](https://github.com/JeffGu98/BlazeRush/releases)。流程和密钥备份说明见 [`docs/android-signing.md`](docs/android-signing.md)。不要把密钥提交进本仓库。
+
+本机构建：
 
 ```bash
 ./tools/export_android.sh
