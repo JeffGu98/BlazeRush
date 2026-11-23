@@ -69,6 +69,7 @@ func add_charge(amount: float) -> void:
 	var now_ready := special_charge >= SPECIAL_COST
 	if now_ready and not was_ready:
 		Sfx.play_ready_once()
+		Haptics.ready_special()
 	special_changed.emit(special_charge, now_ready)
 
 func _physics_process(delta: float) -> void:
@@ -126,12 +127,26 @@ func _do_fire() -> void:
 	var dir := _aim_dir()
 	facing = dir
 	rotation = facing.angle() + PI * 0.5
+	_knock += -dir * 28.0
+	_spawn_muzzle()
 	fired.emit()
 	Sfx.play("shoot", randf_range(0.92, 1.08), -4.0)
 	var bullet_scene: PackedScene = preload("res://scenes/bullet.tscn")
 	var b = bullet_scene.instantiate()
 	b.setup(global_position + dir * 22.0, dir, true, 1, 560.0)
 	get_parent().add_child(b)
+
+func _spawn_muzzle() -> void:
+	var flash := Polygon2D.new()
+	flash.polygon = PackedVector2Array([
+		Vector2(-5, -18), Vector2(0, -36), Vector2(5, -18)
+	])
+	flash.color = Color(1.0, 0.92, 0.5, 1)
+	flash.z_index = 2
+	add_child(flash)
+	var tw := create_tween()
+	tw.tween_property(flash, "modulate:a", 0.0, 0.07)
+	tw.tween_callback(flash.queue_free)
 
 func _do_special() -> void:
 	special_charge = 0.0
@@ -152,6 +167,7 @@ func take_damage(amount: int, from_pos: Vector2) -> void:
 		away = Vector2.RIGHT
 	_knock = away * 280.0
 	Sfx.play("hurt", randf_range(0.9, 1.1))
+	Haptics.hurt()
 	hurt.emit(hp)
 	if hp <= 0:
 		alive = false

@@ -348,7 +348,7 @@ offset_bottom = 1220.0
 theme_override_colors/font_color = Color(0.65, 0.65, 0.75, 1)
 theme_override_font_sizes/font_size = 16
 horizontal_alignment = 1
-text = "左摇杆移动 · 右键射击
+text = "左侧移动 · 右侧射击 / 必杀
 必杀蓄满可释放烈焰冲击
 桌面：WASD 移动，空格射击，K 必杀"
 
