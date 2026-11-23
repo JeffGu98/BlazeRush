@@ -70,7 +70,7 @@ func _physics_process(delta: float) -> void:
 	_flash = maxf(0.0, _flash - delta)
 	_pulse += delta * 6.0
 	if _flash > 0.0:
-		modulate = Color(2.0, 2.0, 2.0)
+		modulate = Color(3.2, 2.4, 1.6)
 	else:
 		modulate = Color.WHITE
 		ring.scale = Vector2.ONE * (1.0 + 0.06 * sin(_pulse))
@@ -130,13 +130,15 @@ func take_hit(damage: int, from_pos: Vector2, knock_force: float = 220.0) -> voi
 	if not alive:
 		return
 	hp -= damage
-	_flash = 0.07
+	_flash = 0.09
 	var away := (global_position - from_pos).normalized()
 	if away == Vector2.ZERO:
 		away = Vector2.RIGHT
 	_knock = away * knock_force * (0.45 if kind == Kind.BRUISER else 1.0)
-	Sfx.play("hit", randf_range(0.85, 1.15), -6.0)
-	if hp <= 0:
+	Sfx.play("hit", randf_range(0.85, 1.15), -5.0)
+	var died := hp <= 0
+	get_tree().call_group("game", "enemy_impact", global_position, away, died, kind == Kind.BRUISER)
+	if died:
 		_die()
 
 func _die() -> void:

@@ -1,6 +1,7 @@
 .godot/
 *.translation
 build/*.apk
+build/*.idsig
 export_presets.cfg.bak
 *.keystore
 credentials.env
