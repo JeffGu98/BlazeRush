@@ -4,10 +4,12 @@ var _players: Array[AudioStreamPlayer] = []
 var _streams: Dictionary = {}
 var _ready_played := false
 
+
 func _ready() -> void:
-	for i in 8:
+	for i in 10:
 		var p := AudioStreamPlayer.new()
 		p.bus = "Master"
+		p.process_mode = Node.PROCESS_MODE_ALWAYS
 		add_child(p)
 		_players.append(p)
 	_load("shoot", "res://assets/sfx/shoot.wav")
@@ -21,12 +23,16 @@ func _ready() -> void:
 	_load("over", "res://assets/sfx/over.wav")
 	_load("combo", "res://assets/sfx/combo.wav")
 
+
 func _load(key: String, path: String) -> void:
 	var s := load(path)
 	if s:
 		_streams[key] = s
 
+
 func play(key: String, pitch: float = 1.0, volume_db: float = 0.0) -> void:
+	if SaveData.sfx_muted:
+		return
 	if not _streams.has(key):
 		return
 	for p in _players:
@@ -36,12 +42,12 @@ func play(key: String, pitch: float = 1.0, volume_db: float = 0.0) -> void:
 			p.volume_db = volume_db
 			p.play()
 			return
-	# steal first
 	var p2: AudioStreamPlayer = _players[0]
 	p2.stream = _streams[key]
 	p2.pitch_scale = clampf(pitch, 0.5, 2.0)
 	p2.volume_db = volume_db
 	p2.play()
+
 
 func play_ready_once() -> void:
 	if _ready_played:
@@ -49,5 +55,14 @@ func play_ready_once() -> void:
 	_ready_played = true
 	play("ready", 1.0, -2.0)
 
+
 func reset_ready() -> void:
 	_ready_played = false
+
+
+func _exit_tree() -> void:
+	for p in _players:
+		if is_instance_valid(p):
+			p.stop()
+			p.stream = null
+	_streams.clear()
