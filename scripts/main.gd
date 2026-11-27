@@ -74,9 +74,29 @@ func _ready() -> void:
 	btn_quit.pressed.connect(_to_title)
 	flash.modulate.a = 0.0
 	banner.visible = false
+	_build_version_label()
 	_show_title()
 	_check_for_update()
 	set_process(true)
+
+func _build_version_label() -> void:
+	var version := str(ProjectSettings.get_setting("application/config/version", "")).strip_edges()
+	if version.is_empty():
+		return
+	var lbl := Label.new()
+	lbl.name = "VersionLabel"
+	lbl.text = version if version.begins_with("v") or version.begins_with("V") else "v%s" % version
+	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	lbl.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
+	lbl.offset_left = -180
+	lbl.offset_top = 24
+	lbl.offset_right = -24
+	lbl.offset_bottom = 56
+	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	lbl.add_theme_font_size_override("font_size", 18)
+	lbl.add_theme_color_override("font_color", Color(0.65, 0.65, 0.75, 0.85))
+	title_panel.add_child(lbl)
 
 func _layout_arena() -> void:
 	# Playfield above controls

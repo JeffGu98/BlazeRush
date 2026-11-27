@@ -25,6 +25,7 @@ func _run() -> void:
 	_test_bgm()
 	_test_haptics()
 	_test_multitouch(main)
+	_test_version_label(main)
 
 	if main.has_method("_start_game"):
 		main._start_game()
@@ -143,6 +144,14 @@ func _test_multitouch(main: Node) -> void:
 	if back.distance_to(fire_pos) > 0.75:
 		_fail_msg("pad _to_local mismatch: %s vs %s" % [back, fire_pos])
 	print("[selftest] multitouch pad ok")
+
+func _test_version_label(main: Node) -> void:
+	var lbl := main.get_node_or_null("UI/Title/VersionLabel") as Label
+	var expected := "v%s" % str(ProjectSettings.get_setting("application/config/version", "")).strip_edges()
+	if lbl == null or lbl.text != expected:
+		_fail_msg("VersionLabel mismatch: got=%s want=%s" % [lbl.text if lbl else "<missing>", expected])
+		return
+	print("[selftest] version label ok: ", lbl.text)
 
 func _fail() -> void:
 	print("[selftest] FAIL")
