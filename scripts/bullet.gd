@@ -9,6 +9,7 @@ var life: float = 1.5
 var pierce_left: int = 0
 var ricochet_left: int = 0
 var is_crit: bool = false
+var focus_beam: bool = false
 var arena_rect: Rect2 = Rect2()
 
 var _spent: bool = false
@@ -28,7 +29,8 @@ func setup(
 	pierce: int = 0,
 	ricochet: int = 0,
 	crit: bool = false,
-	rect: Rect2 = Rect2()
+	rect: Rect2 = Rect2(),
+	p_focus_beam: bool = false
 ) -> void:
 	global_position = pos
 	dir = d.normalized() if d.length_squared() > 0.0001 else Vector2.UP
@@ -38,14 +40,22 @@ func setup(
 	pierce_left = pierce
 	ricochet_left = ricochet
 	is_crit = crit
+	focus_beam = p_focus_beam
 	arena_rect = rect
 	rotation = dir.angle()
+	_refresh_colors()
+	if poly != null:
+		poly.visible = false
+	queue_redraw()
+
+
+func _refresh_colors() -> void:
 	if from_player:
 		collision_layer = 8
 		collision_mask = 4
 		if is_crit:
 			_core_color = Color(1.0, 0.96, 0.55)
-			_glow_color = Color(1.0, 0.72, 0.12, 0.65)
+			_glow_color = Color(1.0, 0.72, 0.12, 0.68)
 			scale = Vector2(1.28, 1.28)
 		elif pierce_left > 0:
 			_core_color = Color(0.55, 0.96, 1.0)
@@ -62,9 +72,6 @@ func setup(
 		_core_color = Color(1.0, 0.42, 0.78)
 		_glow_color = Color(1.0, 0.18, 0.55, 0.5)
 		scale = Vector2(1.12, 1.12)
-	if poly != null:
-		poly.visible = false
-	queue_redraw()
 
 
 func _ready() -> void:
@@ -87,7 +94,7 @@ func _physics_process(delta: float) -> void:
 
 func _draw() -> void:
 	if from_player:
-		var tail_len := 22.0 if is_crit else 16.0
+		var tail_len := 24.0 if is_crit else 16.0
 		draw_line(Vector2(-tail_len, 0), Vector2(6, 0), _glow_color, 7.5 if is_crit else 5.5, true)
 		draw_line(Vector2(-tail_len * 0.65, 0), Vector2(9, 0), _core_color, 3.2 if is_crit else 2.6, true)
 		draw_circle(Vector2(7, 0), 3.4 if is_crit else 2.6, Color(1, 1, 1, 0.92))
@@ -109,6 +116,11 @@ func _on_body(body: Node) -> void:
 			body.take_hit(damage, global_position, 260.0 if is_crit else 210.0, is_crit)
 		if pierce_left > 0:
 			pierce_left -= 1
+			if focus_beam:
+				damage += 1
+				is_crit = true
+				_refresh_colors()
+				queue_redraw()
 			return
 		if ricochet_left > 0:
 			var next_target := _find_ricochet_target(body)

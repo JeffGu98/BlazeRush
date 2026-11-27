@@ -2,17 +2,19 @@ extends Node2D
 class_name VfxLayer
 
 ## Pure _draw()-based neon VFX engine: embers, sparks, shockwaves, scorch decals,
-## spawn portals, target reticle, and floating combat text (zero node churn).
+## burn zones, low-HP heartbeat vignette, spawn portals, target reticle, and combat text.
 
-var arena: Rect2 = Rect2(36, 110, 648, 870)
+var arena: Rect2 = Rect2(32, 118, 656, 868)
 var lock_target: Node2D = null
 var lock_color: Color = Color(1.0, 0.72, 0.28, 0.88)
+var low_hp_danger: float = 0.0
 
 var _embers: Array[Dictionary] = []
 var _sparks: Array[Dictionary] = []
 var _rings: Array[Dictionary] = []
 var _portals: Array[Dictionary] = []
 var _scorches: Array[Dictionary] = []
+var _burn_zones: Array[Dictionary] = []
 var _arcs: Array[Dictionary] = []
 var _texts: Array[Dictionary] = []
 var _time: float = 0.0
@@ -20,19 +22,23 @@ var _time: float = 0.0
 
 func setup(rect: Rect2) -> void:
 	arena = rect
-	_embers.clear()
-	for i in 26:
-		_embers.append({
-			"pos": Vector2(
-				randf_range(arena.position.x + 8.0, arena.end.x - 8.0),
-				randf_range(arena.position.y + 8.0, arena.end.y - 8.0)
-			),
-			"vy": randf_range(-28.0, -10.0),
-			"vx": randf_range(-8.0, 8.0),
-			"r": randf_range(1.4, 3.4),
-			"phase": randf() * TAU,
-			"warm": randf(),
-		})
+	if _embers.is_empty():
+		for i in 28:
+			_embers.append({
+				"pos": Vector2(
+					randf_range(arena.position.x + 8.0, arena.end.x - 8.0),
+					randf_range(arena.position.y + 8.0, arena.end.y - 8.0)
+				),
+				"vy": randf_range(-28.0, -10.0),
+				"vx": randf_range(-8.0, 8.0),
+				"r": randf_range(1.4, 3.4),
+				"phase": randf() * TAU,
+				"warm": randf(),
+			})
+	else:
+		for e in _embers:
+			e["pos"].x = clampf(e["pos"].x, arena.position.x + 8.0, arena.end.x - 8.0)
+			e["pos"].y = clampf(e["pos"].y, arena.position.y + 8.0, arena.end.y - 8.0)
 
 
 func clear_combat() -> void:
@@ -40,19 +46,30 @@ func clear_combat() -> void:
 	_rings.clear()
 	_portals.clear()
 	_scorches.clear()
+	_burn_zones.clear()
 	_arcs.clear()
 	_texts.clear()
 	lock_target = null
+	low_hp_danger = 0.0
 	queue_redraw()
 
 
-func spawn_portal(pos: Vector2, col: Color, duration: float = 0.6, radius: float = 24.0) -> void:
+func spawn_portal(pos: Vector2, col: Color, duration: float = 0.5, radius: float = 24.0) -> void:
 	_portals.append({
 		"pos": pos,
 		"col": col,
 		"t": 0.0,
 		"dur": duration,
 		"radius": radius,
+	})
+
+
+func spawn_burn_zone(pos: Vector2, radius: float, duration: float = 3.5) -> void:
+	_burn_zones.append({
+		"pos": pos,
+		"r": radius,
+		"t": 0.0,
+		"dur": duration,
 	})
 
 
@@ -120,14 +137,14 @@ func spawn_arc(from_pos: Vector2, to_pos: Vector2, col: Color = Color(0.55, 0.82
 		"b": to_pos,
 		"col": col,
 		"t": 0.0,
-		"dur": 0.16,
+		"dur": 0.17,
 	})
 
 
-func spawn_thruster(pos: Vector2, dir: Vector2, overdrive: bool = false) -> void:
+func spawn_thruster(pos: Vector2, dir: Vector2, overdrive: bool = false, tint: Color = Color(1.0, 0.52, 0.18)) -> void:
 	if _sparks.size() > 140:
 		return
-	var col := Color(1.0, 0.88, 0.32) if overdrive else Color(1.0, 0.52, 0.18)
+	var col := Color(1.0, 0.90, 0.32) if overdrive else tint
 	var spread := dir.rotated(randf_range(-0.35, 0.35))
 	_sparks.append({
 		"pos": pos,
@@ -149,7 +166,7 @@ func spawn_text(pos: Vector2, text: String, col: Color = Color(1, 0.95, 0.75), f
 		"col": col,
 		"size": font_size,
 		"t": 0.0,
-		"dur": 0.65,
+		"dur": 0.68,
 	})
 
 
@@ -169,6 +186,7 @@ func _process(delta: float) -> void:
 	_advance_list(_rings, delta, false)
 	_advance_list(_portals, delta, false)
 	_advance_list(_scorches, delta, false)
+	_advance_list(_burn_zones, delta, false)
 	_advance_list(_arcs, delta, false)
 	for i in range(_texts.size() - 1, -1, -1):
 		var item := _texts[i]
@@ -203,6 +221,19 @@ func _draw() -> void:
 		var c: Color = sc["col"]
 		draw_circle(sc["pos"], float(sc["r"]), Color(c.r, c.g, c.b, (1.0 - u) * 0.14))
 
+	# 2.5 Aftershock Nova burn zones
+	for bz in _burn_zones:
+		var u := clampf(float(bz["t"]) / float(bz["dur"]), 0.0, 1.0)
+		var fade := 1.0 if u < 0.75 else (1.0 - (u - 0.75) / 0.25)
+		var r := float(bz["r"]) * (0.96 + 0.04 * sin(_time * 12.0))
+		var p: Vector2 = bz["pos"]
+		draw_circle(p, r, Color(1.0, 0.36, 0.10, 0.16 * fade))
+		draw_arc(p, r, 0.0, TAU, 44, Color(1.0, 0.62, 0.20, 0.72 * fade), 3.0, true)
+		var spin := _time * 3.0
+		for k in 3:
+			var a := spin + k * TAU / 3.0
+			draw_arc(p, r * 0.65, a, a + 0.9, 12, Color(1.0, 0.85, 0.35, 0.52 * fade), 2.2, true)
+
 	# 3. Spawn warning portals
 	for p in _portals:
 		var u := clampf(float(p["t"]) / float(p["dur"]), 0.0, 1.0)
@@ -221,14 +252,15 @@ func _draw() -> void:
 	if lock_target != null and is_instance_valid(lock_target) and lock_target.get("alive") != false:
 		var lp: Vector2 = lock_target.global_position
 		var r := 24.0 + 2.5 * sin(_time * 10.0)
-		if lock_target.get("kind") == Enemy.Kind.BOSS:
+		var lk = lock_target.get("kind")
+		if lk != null and Enemy.is_boss_kind(int(lk)):
 			r = 44.0 + 3.0 * sin(_time * 10.0)
 		var rot := _time * 2.2
 		for k in 4:
 			var a := rot + k * PI * 0.5
 			draw_arc(lp, r, a - 0.34, a + 0.34, 8, lock_color, 2.4, true)
 
-	# 5. Electric ricochet arcs
+	# 5. Electric ricochet / chain-lightning arcs
 	for a in _arcs:
 		var u := clampf(float(a["t"]) / float(a["dur"]), 0.0, 1.0)
 		var c: Color = a["col"]
@@ -257,7 +289,18 @@ func _draw() -> void:
 		var tail: Vector2 = s["pos"] - dir * float(s["len"]) * (1.0 - u * 0.5)
 		draw_line(tail, s["pos"], Color(c.r, c.g, c.b, 1.0 - u), float(s["width"]), true)
 
-	# 8. Floating combat text
+	# 8. Low-HP heartbeat danger edge glow
+	if low_hp_danger > 0.01:
+		var beat := 0.45 + 0.55 * pow(maxf(0.0, sin(_time * 5.2)), 2.0)
+		var alpha := low_hp_danger * beat * 0.38
+		var edge_w := 14.0
+		var col := Color(1.0, 0.14, 0.22, alpha)
+		draw_rect(Rect2(arena.position, Vector2(arena.size.x, edge_w)), col)
+		draw_rect(Rect2(Vector2(arena.position.x, arena.end.y - edge_w), Vector2(arena.size.x, edge_w)), col)
+		draw_rect(Rect2(arena.position, Vector2(edge_w, arena.size.y)), col)
+		draw_rect(Rect2(Vector2(arena.end.x - edge_w, arena.position.y), Vector2(edge_w, arena.size.y)), col)
+
+	# 9. Floating combat text
 	var font := ThemeDB.fallback_font
 	if font != null:
 		for t in _texts:

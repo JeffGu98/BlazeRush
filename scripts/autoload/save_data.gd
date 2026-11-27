@@ -11,6 +11,8 @@ var runs_played: int = 0
 var bgm_muted: bool = false
 var sfx_muted: bool = false
 var haptics_enabled: bool = true
+var auto_fire: bool = false
+var selected_ship: String = "vanguard"
 
 
 func _ready() -> void:
@@ -28,6 +30,8 @@ func load_data() -> void:
 		bgm_muted = bool(cfg.get_value("settings", "bgm_muted", false))
 		sfx_muted = bool(cfg.get_value("settings", "sfx_muted", false))
 		haptics_enabled = bool(cfg.get_value("settings", "haptics_enabled", true))
+		auto_fire = bool(cfg.get_value("settings", "auto_fire", false))
+		selected_ship = str(cfg.get_value("settings", "selected_ship", "vanguard"))
 
 
 func save_all() -> void:
@@ -40,6 +44,8 @@ func save_all() -> void:
 	cfg.set_value("settings", "bgm_muted", bgm_muted)
 	cfg.set_value("settings", "sfx_muted", sfx_muted)
 	cfg.set_value("settings", "haptics_enabled", haptics_enabled)
+	cfg.set_value("settings", "auto_fire", auto_fire)
+	cfg.set_value("settings", "selected_ship", selected_ship)
 	cfg.save(PATH)
 
 
@@ -73,4 +79,14 @@ func set_sfx_muted(muted: bool) -> void:
 
 func set_haptics_enabled(enabled: bool) -> void:
 	haptics_enabled = enabled
+	save_all()
+
+
+func set_auto_fire(enabled: bool) -> void:
+	auto_fire = enabled
+	save_all()
+
+
+func set_selected_ship(ship_id: String) -> void:
+	selected_ship = ship_id
 	save_all()

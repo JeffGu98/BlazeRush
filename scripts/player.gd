@@ -3,7 +3,7 @@ class_name Player
 
 signal died
 signal hurt(hp_left: int, max_hp: int)
-signal shield_blocked(shield_left: int)
+signal shield_blocked(shield_left: int, pos: Vector2)
 signal special_changed(charge: float, ready: bool)
 signal overdrive_changed(time_left: float)
 signal fired
@@ -21,6 +21,7 @@ var shield: int = 0
 var facing: Vector2 = Vector2.UP
 var move_input: Vector2 = Vector2.ZERO
 var fire_held: bool = false
+var auto_fire_enabled: bool = false
 var special_pressed: bool = false
 var special_charge: float = 0.0
 var overdrive_timer: float = 0.0
@@ -28,6 +29,7 @@ var locked_target: Node2D = null
 var alive: bool = true
 var arena_rect: Rect2 = Rect2()
 var upgrades: UpgradeSystem = null
+var ship_id: String = "vanguard"
 
 var _fire_cd: float = 0.0
 var _invuln: float = 0.0
@@ -35,6 +37,7 @@ var _flash: float = 0.0
 var _knock: Vector2 = Vector2.ZERO
 var _thruster_cd: float = 0.0
 var _time: float = 0.0
+var _ship_color: Color = Color(1.0, 0.56, 0.2)
 
 @onready var body: Polygon2D = $Body
 @onready var glow: Polygon2D = $Glow
@@ -42,24 +45,57 @@ var _time: float = 0.0
 
 func _ready() -> void:
 	add_to_group("player")
-	_build_shapes()
+	apply_ship_visual(ship_id)
 
 
-func _build_shapes() -> void:
-	body.polygon = PackedVector2Array([
-		Vector2(0, -20), Vector2(15, 14), Vector2(0, 7), Vector2(-15, 14)
-	])
-	body.color = Color(1.0, 0.56, 0.2)
-	glow.polygon = PackedVector2Array([
-		Vector2(0, -27), Vector2(22, 19), Vector2(0, 10), Vector2(-22, 19)
-	])
-	glow.color = Color(1.0, 0.42, 0.12, 0.30)
+func apply_ship_visual(id: String) -> void:
+	ship_id = id
+	var spec := ShipCatalog.get_ship(id)
+	_ship_color = spec["color"]
+	if body == null or glow == null:
+		return
+	body.color = _ship_color
+	glow.color = spec["glow"]
+	match id:
+		"storm":
+			# Twin-prong forward-swept interceptor
+			body.polygon = PackedVector2Array([
+				Vector2(0, -16), Vector2(12, -20), Vector2(17, 10),
+				Vector2(6, 13), Vector2(0, 6), Vector2(-6, 13),
+				Vector2(-17, 10), Vector2(-12, -20)
+			])
+			glow.polygon = PackedVector2Array([
+				Vector2(0, -22), Vector2(16, -25), Vector2(22, 14),
+				Vector2(0, 10), Vector2(-22, 14), Vector2(-16, -25)
+			])
+		"starcore":
+			# Heavy railgun cruiser
+			body.polygon = PackedVector2Array([
+				Vector2(0, -24), Vector2(7, -14), Vector2(18, 4),
+				Vector2(14, 15), Vector2(0, 10), Vector2(-14, 15),
+				Vector2(-18, 4), Vector2(-7, -14)
+			])
+			glow.polygon = PackedVector2Array([
+				Vector2(0, -30), Vector2(23, 8), Vector2(18, 20),
+				Vector2(0, 14), Vector2(-18, 20), Vector2(-23, 8)
+			])
+		_:
+			# Classic delta-wing vanguard
+			body.polygon = PackedVector2Array([
+				Vector2(0, -20), Vector2(15, 14), Vector2(0, 7), Vector2(-15, 14)
+			])
+			glow.polygon = PackedVector2Array([
+				Vector2(0, -27), Vector2(22, 19), Vector2(0, 10), Vector2(-22, 19)
+			])
+	queue_redraw()
 
 
 func reset_state(pos: Vector2, p_upgrades: UpgradeSystem = null) -> void:
 	upgrades = p_upgrades
+	var sid := str(upgrades.ship.get("id", "vanguard")) if upgrades != null else "vanguard"
+	apply_ship_visual(sid)
 	global_position = pos
-	max_hp = MAX_HP + (upgrades.max_hp_bonus() if upgrades else 0)
+	max_hp = upgrades.base_max_hp() if upgrades != null else MAX_HP
 	hp = max_hp
 	shield = upgrades.wave_shield_max() if upgrades else 0
 	alive = true
@@ -82,8 +118,7 @@ func reset_state(pos: Vector2, p_upgrades: UpgradeSystem = null) -> void:
 
 
 func sync_upgrades(heal_amount: int = 0) -> void:
-	var new_max := MAX_HP + (upgrades.max_hp_bonus() if upgrades else 0)
-	max_hp = new_max
+	max_hp = upgrades.base_max_hp() if upgrades != null else MAX_HP
 	if heal_amount > 0:
 		hp = mini(hp + heal_amount, max_hp)
 	refresh_wave_shield()
@@ -157,15 +192,16 @@ func _physics_process(delta: float) -> void:
 		if _thruster_cd <= 0.0:
 			_thruster_cd = 0.04
 			var back_pos := global_position - facing * 16.0
-			get_tree().call_group("game", "spawn_player_thruster", back_pos, -facing, overdrive_timer > 0.0)
+			get_tree().call_group("game", "spawn_player_thruster", back_pos, -facing, overdrive_timer > 0.0, _ship_color)
 	velocity = wish * spd + _knock
 	_knock = _knock.move_toward(Vector2.ZERO, 1450.0 * delta)
 	move_and_slide()
 	_clamp_to_arena()
 
 	locked_target = _find_target()
+	var wants_fire := fire_held or (auto_fire_enabled and is_instance_valid(locked_target))
 
-	if fire_held and _fire_cd <= 0.0:
+	if wants_fire and _fire_cd <= 0.0:
 		_do_fire()
 	if special_pressed and special_charge >= SPECIAL_COST:
 		_do_special()
@@ -174,20 +210,16 @@ func _physics_process(delta: float) -> void:
 
 
 func _draw() -> void:
-	# Cockpit neon core
-	draw_circle(Vector2(0, -3), 4.2, Color(1.0, 0.94, 0.72, 0.95))
-	# Flickering engine flame
+	draw_circle(Vector2(0, -3), 4.2, Color(1.0, 0.96, 0.8, 0.95))
 	if move_input.length() > 0.12 or overdrive_timer > 0.0:
 		var flick := 14.0 + 7.0 * sin(_time * 42.0)
-		var col := Color(1.0, 0.9, 0.35, 0.88) if overdrive_timer > 0.0 else Color(1.0, 0.5, 0.16, 0.8)
+		var col := Color(1.0, 0.9, 0.35, 0.88) if overdrive_timer > 0.0 else Color(_ship_color.r, _ship_color.g, _ship_color.b, 0.82)
 		draw_colored_polygon(PackedVector2Array([
 			Vector2(-6, 11), Vector2(0, 11 + flick), Vector2(6, 11)
 		]), col)
-	# Overdrive aura
 	if overdrive_timer > 0.0:
 		var r := 25.0 + 2.5 * sin(_time * 16.0)
 		draw_arc(Vector2.ZERO, r, 0.0, TAU, 32, Color(1.0, 0.82, 0.25, 0.72), 2.5, true)
-	# Shield ring
 	if shield > 0:
 		var sr := 28.0 + 1.5 * sin(_time * 7.0)
 		draw_arc(Vector2.ZERO, sr, 0.0, TAU, 32, Color(0.32, 0.92, 1.0, 0.78), 2.4, true)
@@ -204,7 +236,7 @@ func _clamp_to_arena() -> void:
 
 func _find_target() -> Node2D:
 	var nearest: Node2D = null
-	var best := 460.0 * 460.0
+	var best := 490.0 * 490.0
 	for e in get_tree().get_nodes_in_group("enemies"):
 		if not is_instance_valid(e) or e.get("alive") == false:
 			continue
@@ -229,7 +261,7 @@ func _do_fire() -> void:
 	var dir := _aim_dir()
 	facing = dir
 	rotation = facing.angle() + PI * 0.5
-	_knock += -dir * 22.0
+	_knock += -dir * 20.0
 	_spawn_muzzle()
 	fired.emit()
 	Sfx.play("shoot", randf_range(1.02, 1.18) if overdrive_timer > 0.0 else randf_range(0.92, 1.08), -4.5)
@@ -239,6 +271,7 @@ func _do_fire() -> void:
 	var pierce := upgrades.pierce_count() if upgrades else 0
 	var ricochet := upgrades.ricochet_count() if upgrades else 0
 	var crit_rate := upgrades.crit_chance() if upgrades else 0.05
+	var has_focus := upgrades.has_synergy("focus_beam") if upgrades else false
 	var spread_step := 0.13 if count <= 3 else 0.11
 
 	for i in count:
@@ -252,11 +285,12 @@ func _do_fire() -> void:
 			shot_dir,
 			true,
 			dmg,
-			620.0 if overdrive_timer > 0.0 else 580.0,
+			630.0 if overdrive_timer > 0.0 else 590.0,
 			pierce,
 			ricochet,
 			is_crit,
-			arena_rect
+			arena_rect,
+			has_focus
 		)
 		get_parent().add_child(b)
 
@@ -295,7 +329,7 @@ func take_damage(amount: int, from_pos: Vector2) -> void:
 		_knock = away * 220.0
 		Sfx.play("ready", 1.25, -2.0)
 		Haptics.hit()
-		shield_blocked.emit(shield)
+		shield_blocked.emit(shield, global_position)
 		queue_redraw()
 		return
 

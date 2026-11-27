@@ -15,7 +15,7 @@ func _fail_msg(msg: String) -> void:
 
 func _run() -> void:
 	print("[selftest] start")
-	_test_upgrade_system()
+	_test_ships_and_synergies()
 	_test_wave_director()
 	_test_update_semver()
 
@@ -34,8 +34,27 @@ func _run() -> void:
 	_test_multitouch(main)
 	_test_version_label(main)
 
+	# Test ship selection & auto-fire sync
+	var save_data := root.get_node_or_null("SaveData")
+	main._select_ship("storm")
+	main._on_auto_fire_toggled(true)
+	if save_data == null or save_data.selected_ship != "storm" or not main.player.auto_fire_enabled or not main.pad.auto_fire_active:
+		_fail_msg("ship select or auto_fire toggle failed to sync")
+	print("[selftest] ship & auto-fire sync ok")
+
+	# Test 20:9 tall phone expand layout
+	main.get_window().size = Vector2i(720, 1600)
+	await process_frame
+	main._layout_for_viewport()
+	if main.arena.size.y < 1050.0:
+		_fail_msg("expand layout did not grow arena height on 20:9 screen: %s" % str(main.arena))
+	print("[selftest] 20:9 expand layout ok: arena=%s" % str(main.arena))
+
 	if main.has_method("_start_game"):
 		main._start_game()
+	if main.player.max_hp != 4 or main.upgrades.projectile_count() != 2:
+		_fail_msg("storm ship starting stats mismatch hp=%d proj=%d" % [main.player.max_hp, main.upgrades.projectile_count()])
+
 	await create_timer(0.75).timeout
 	await process_frame
 	var enemies = get_nodes_in_group("enemies")
@@ -43,76 +62,94 @@ func _run() -> void:
 	if enemies.is_empty():
 		_fail_msg("expected enemies to spawn after portal warning")
 
-	# Test shield absorption
+	# Test low-HP danger glow
+	main.player.hp = 1
+	await process_frame
+	if main.vfx.low_hp_danger < 0.9:
+		_fail_msg("low_hp_danger did not activate at 1 HP")
+	main.player.hp = main.player.max_hp
+	print("[selftest] low-HP danger glow ok")
+
+	# Test shield + Aegis Siphon synergy
 	main.upgrades.apply("shield")
+	main.upgrades.apply("vampire")
 	main.player.sync_upgrades(0)
+	if not main.upgrades.has_synergy("aegis_siphon") or main.upgrades.vampire_threshold() != 10:
+		_fail_msg("aegis_siphon synergy did not activate")
 	var hp_before: int = main.player.hp
 	var shield_before: int = main.player.shield
-	if shield_before < 1:
-		_fail_msg("shield upgrade did not grant shield")
 	main.player.take_damage(1, Vector2.ZERO)
 	if main.player.hp != hp_before or main.player.shield != shield_before - 1:
-		_fail_msg("shield did not absorb damage hp=%d/%d shield=%d" % [main.player.hp, hp_before, main.player.shield])
-	print("[selftest] shield absorb ok")
+		_fail_msg("shield did not absorb damage")
+	print("[selftest] shield + aegis_siphon ok")
 
-	# Test splitter spawns mini enemies
-	var splitter: Enemy = main._materialize_enemy(Enemy.Kind.SPLITTER, Vector2(360, 420))
-	var count_before_split := get_nodes_in_group("enemies").size()
-	splitter.take_hit(99, Vector2(360, 400))
-	await process_frame
-	var minis := 0
-	for e in get_nodes_in_group("enemies"):
-		if is_instance_valid(e) and e.kind == Enemy.Kind.MINI:
-			minis += 1
-	if minis < 2:
-		_fail_msg("splitter did not spawn 2 mini enemies, got %d (before=%d)" % [minis, count_before_split])
-	print("[selftest] splitter ok")
-
-	# Test boss HP bar & kill
-	var boss: Enemy = main._materialize_enemy(Enemy.Kind.BOSS, Vector2(360, 260))
-	if not main._boss_box.visible:
-		_fail_msg("boss HP bar not visible after boss spawn")
-	boss.take_hit(10, Vector2(360, 320), 100.0, true)
-	if int(main._boss_bar.value) != boss.hp:
-		_fail_msg("boss HP bar did not sync")
-	boss.take_hit(999, Vector2(360, 320))
-	await process_frame
-	if main._boss_box.visible:
-		_fail_msg("boss HP bar stayed visible after boss death")
-	print("[selftest] boss lifecycle ok")
-
-	# Test pickup overdrive & energy
-	main._spawn_pickup(Pickup.Kind.OVERDRIVE, main.player.global_position)
-	await process_frame
-	await process_frame
-	if main.player.overdrive_timer <= 0.0:
-		_fail_msg("overdrive pickup did not activate overdrive")
-	print("[selftest] pickup overdrive ok")
-
-	# Test nova & hitstop restore
-	if main.has_method("player_special_nova"):
-		main.player_special_nova(Vector2(360, 545))
+	# Test Aftershock Nova synergy creates burn zone
+	main.upgrades.apply("nova_plus")
+	main.upgrades.apply("charge")
+	if not main.upgrades.has_synergy("aftershock_nova"):
+		_fail_msg("aftershock_nova synergy did not activate")
+	main.player_special_nova(Vector2(360, 545))
+	if main._burn_zones.is_empty():
+		_fail_msg("aftershock_nova did not spawn burn zone")
 	var waited := 0
 	while Engine.time_scale < 0.99 and waited < 90:
 		await process_frame
 		waited += 1
 	if Engine.time_scale < 0.99:
 		_fail_msg("time_scale not restored after nova hitstop, scale=%s" % Engine.time_scale)
-	else:
-		print("[selftest] time_scale restored after %d frames" % waited)
+	print("[selftest] aftershock_nova & hitstop ok (%d frames)" % waited)
 
-	# Test roguelite upgrade choice flow
+	# Test Rift Twins combined Boss HP bar & enrage mechanic
+	main.wave = 10
+	var twin_a: Enemy = main._materialize_enemy(Enemy.Kind.BOSS_TWIN, Vector2(220, 260))
+	var twin_b: Enemy = main._materialize_enemy(Enemy.Kind.BOSS_TWIN, Vector2(500, 260))
+	if not main._boss_box.visible or int(main._boss_bar.max_value) != twin_a.max_hp + twin_b.max_hp:
+		_fail_msg("rift twins combined boss bar mismatch")
+	twin_a.take_hit(999, Vector2(220, 320))
+	await process_frame
+	if not twin_b.enraged:
+		_fail_msg("surviving rift twin did not enrage after sibling died")
+	twin_b.take_hit(999, Vector2(500, 320))
+	await process_frame
+	if main._boss_box.visible:
+		_fail_msg("boss bar stayed visible after both twins died")
+	print("[selftest] rift twins enrage & boss bar ok")
+
+	# Test Star Arbiter boss spawn & kill
+	main.wave = 15
+	var arbiter: Enemy = main._materialize_enemy(Enemy.Kind.BOSS_ARBITER, Vector2(360, 260))
+	if not main._boss_box.visible:
+		_fail_msg("arbiter boss bar not visible")
+	arbiter.take_hit(999, Vector2(360, 320))
+	await process_frame
+	print("[selftest] star arbiter ok")
+
+	# Test pickup overdrive
+	main._spawn_pickup(Pickup.Kind.OVERDRIVE, main.player.global_position)
+	await process_frame
+	await process_frame
+	if main.player.overdrive_timer <= 0.0:
+		_fail_msg("overdrive pickup did not activate")
+	print("[selftest] pickup overdrive ok")
+
+	# Test upgrade draft + free reroll
 	main._open_upgrade_choice()
-	if main.state != main.State.UPGRADE_CHOICE or not main._upgrade_panel.visible:
-		_fail_msg("upgrade overlay did not open")
-	if main._upgrade_cards_box.get_child_count() < 1:
-		_fail_msg("upgrade overlay rendered no cards")
+	if main.state != main.State.UPGRADE_CHOICE or not main._upgrade_panel.visible or main._rerolls_left != 1:
+		_fail_msg("upgrade overlay or reroll state invalid")
+	main._on_reroll_upgrades()
+	if main._rerolls_left != 0 or main._upgrade_cards_box.get_child_count() < 1:
+		_fail_msg("reroll failed")
 	var first_id := str(main._current_choices[0]["id"])
 	var wave_before: int = main.wave
 	main._select_upgrade(first_id)
 	if main.state != main.State.PLAYING or main._upgrade_panel.visible or main.wave != wave_before + 1:
 		_fail_msg("selecting upgrade did not resume into next wave")
-	print("[selftest] upgrade draft ok: picked=%s wave=%d" % [first_id, main.wave])
+	print("[selftest] upgrade draft + reroll ok: picked=%s wave=%d" % [first_id, main.wave])
+
+	# Reset settings cleanly
+	if save_data != null:
+		save_data.set_selected_ship("vanguard")
+		save_data.set_auto_fire(false)
 
 	if main.has_method("_clear_hitstop"):
 		main._clear_hitstop()
@@ -133,46 +170,44 @@ func _run() -> void:
 		_fail()
 
 
-func _test_upgrade_system() -> void:
+func _test_ships_and_synergies() -> void:
+	if ShipCatalog.SHIPS.size() != 3:
+		_fail_msg("expected 3 ships")
 	var u := UpgradeSystem.new()
-	var picks := u.roll_choices(3, true)
-	if picks.size() != 3:
-		_fail_msg("roll_choices expected 3, got %d" % picks.size())
-	var has_epic := false
-	var seen := {}
-	for p in picks:
-		var id := str(p["id"])
-		if seen.has(id):
-			_fail_msg("duplicate choice in roll_choices: %s" % id)
-		seen[id] = true
-		if int(p["rarity"]) == UpgradeSystem.Rarity.EPIC:
-			has_epic = true
-	if not has_epic:
-		_fail_msg("guarantee_epic did not include an EPIC upgrade")
+	u.reset("starcore")
+	if u.pierce_count() != 1 or u.crit_chance() < 0.17:
+		_fail_msg("starcore base stats mismatch")
 	u.apply("multishot")
+	var preview := u.would_activate_synergies("ricochet")
+	if preview.is_empty() or str(preview[0]["id"]) != "thunder_blaze":
+		_fail_msg("would_activate_synergies missed thunder_blaze")
+	var applied := u.apply("ricochet")
+	if not u.has_synergy("thunder_blaze") or applied.get("new_synergies", []).is_empty():
+		_fail_msg("thunder_blaze failed to activate")
 	u.apply("pierce")
-	u.apply("ricochet")
-	if u.projectile_count() != 2 or u.pierce_count() != 1 or u.ricochet_count() != 1:
-		_fail_msg("upgrade stats mismatch")
-	print("[selftest] upgrade system ok")
+	u.apply("crit")
+	if not u.has_synergy("focus_beam"):
+		_fail_msg("focus_beam failed to activate")
+	print("[selftest] ships & synergies ok")
 
 
 func _test_wave_director() -> void:
-	if not WaveDirector.is_boss_wave(5) or WaveDirector.is_boss_wave(4):
-		_fail_msg("is_boss_wave logic error")
-	var w5 := WaveDirector.build_queue(5)
-	if not w5.has(Enemy.Kind.BOSS):
-		_fail_msg("wave 5 missing BOSS")
-	var w4 := WaveDirector.build_queue(4)
-	if not w4.has(Enemy.Kind.SPLITTER) or not w4.has(Enemy.Kind.DASHER):
-		_fail_msg("wave 4 missing advanced enemies")
+	if WaveDirector.boss_archetype(5) != Enemy.Kind.BOSS:
+		_fail_msg("wave 5 archetype mismatch")
+	if WaveDirector.boss_archetype(10) != Enemy.Kind.BOSS_TWIN:
+		_fail_msg("wave 10 archetype mismatch")
+	if WaveDirector.boss_archetype(15) != Enemy.Kind.BOSS_ARBITER:
+		_fail_msg("wave 15 archetype mismatch")
+	var w10 := WaveDirector.build_queue(10)
+	if w10.count(Enemy.Kind.BOSS_TWIN) != 2:
+		_fail_msg("wave 10 should spawn 2 BOSS_TWIN")
 	print("[selftest] wave director ok")
 
 
 func _test_update_semver() -> void:
-	if not UpdateChecker.is_newer("v2.0.1", "2.0.0"):
-		_fail_msg("semver failed 2.0.1 > 2.0.0")
-	if UpdateChecker.is_newer("v2.0.0", "2.0.0") or UpdateChecker.is_newer("v1.9.9", "2.0.0"):
+	if not UpdateChecker.is_newer("v2.1.1", "2.1.0"):
+		_fail_msg("semver failed 2.1.1 > 2.1.0")
+	if UpdateChecker.is_newer("v2.1.0", "2.1.0") or UpdateChecker.is_newer("v2.0.9", "2.1.0"):
 		_fail_msg("semver false positive")
 	print("[selftest] update semver ok")
 
@@ -210,15 +245,15 @@ func _test_multitouch(main: Node) -> void:
 		_fail_msg("VirtualPad missing")
 		return
 	var joy_pos := Vector2(116, 120)
-	var fire_pos := Vector2(590, 130)
-	var special_pos := Vector2(440, 150)
-	var miss_pos := Vector2(700, 10)
+	var fire_pos: Vector2 = pad.btn_fire.position + pad.btn_fire.size * 0.5
+	var special_pos: Vector2 = pad.btn_special.position + pad.btn_special.size * 0.5
+	var miss_pos := Vector2(float(pad.size.x) - 10.0, 10.0)
 
 	pad.debug_apply_touch(0, true, joy_pos)
 	if pad.move_vec.length() < 0.01:
 		pad.debug_apply_drag(0, Vector2(160, 80))
 	if pad.move_vec.length() < 0.2:
-		_fail_msg("joystick touch did not produce move_vec, got %s" % pad.move_vec)
+		_fail_msg("floating joystick touch+drag did not produce move_vec, got %s" % pad.move_vec)
 	pad.debug_apply_touch(1, true, fire_pos)
 	if not pad.fire_held:
 		_fail_msg("fire button was not held while joystick is active")

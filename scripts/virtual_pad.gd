@@ -2,21 +2,26 @@ extends Control
 class_name VirtualPad
 
 signal controls_changed(move: Vector2, fire: bool, special: bool)
+signal auto_fire_toggled(enabled: bool)
 
 var move_vec: Vector2 = Vector2.ZERO
 var fire_held: bool = false
+var auto_fire_active: bool = false
 var _special_queue: bool = false
 
 var _joy_touch: int = -1
 var _fire_touch: int = -1
 var _special_touch: int = -1
 var _joy_center: Vector2 = Vector2.ZERO
+var _rest_joy_pos: Vector2 = Vector2(116, 120)
+var _active_joy_pos: Vector2 = Vector2(116, 120)
 var _joy_knob: Vector2 = Vector2.ZERO
 var _max_radius: float = 78.0
 var _kb_special_prev: bool = false
 var _special_ready: bool = false
 var _special_ratio: float = 0.0
 var _time: float = 0.0
+var _auto_btn: Button
 
 @onready var joy_base: Control = $JoyBase
 @onready var joy_knob: Control = $JoyBase/Knob
@@ -36,10 +41,12 @@ func _ready() -> void:
 		c.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_apply_circular_styles()
+	_build_auto_fire_pill()
+	resized.connect(_layout_controls)
+	_layout_controls()
 
 
 func _apply_circular_styles() -> void:
-	# Hide default rectangular panel fills so our sleek vector circles render cleanly.
 	var empty := StyleBoxEmpty.new()
 	for p in [joy_base, joy_knob, btn_fire, btn_special]:
 		if p is Panel:
@@ -52,6 +59,61 @@ func _apply_circular_styles() -> void:
 	special_label.add_theme_color_override("font_color", Color(1.0, 0.95, 0.85, 1.0))
 
 
+func _build_auto_fire_pill() -> void:
+	_auto_btn = Button.new()
+	_auto_btn.name = "AutoFireBtn"
+	_auto_btn.focus_mode = Control.FOCUS_NONE
+	_auto_btn.size = Vector2(92, 34)
+	_auto_btn.add_theme_font_size_override("font_size", 15)
+	_auto_btn.pressed.connect(func():
+		set_auto_fire(not auto_fire_active)
+		auto_fire_toggled.emit(auto_fire_active)
+	)
+	add_child(_auto_btn)
+	_refresh_auto_btn()
+
+
+func set_auto_fire(enabled: bool) -> void:
+	auto_fire_active = enabled
+	_refresh_auto_btn()
+	queue_redraw()
+
+
+func _refresh_auto_btn() -> void:
+	if _auto_btn == null:
+		return
+	_auto_btn.text = "自动:开" if auto_fire_active else "自动:关"
+	_auto_btn.add_theme_color_override(
+		"font_color",
+		Color(0.12, 0.08, 0.03) if auto_fire_active else Color(0.75, 0.78, 0.88)
+	)
+	var bg := Color(1.0, 0.78, 0.25, 0.92) if auto_fire_active else Color(0.14, 0.13, 0.22, 0.84)
+	var border := Color(1.0, 0.90, 0.45, 0.95) if auto_fire_active else Color(0.55, 0.58, 0.72, 0.42)
+	for st in ["normal", "hover", "pressed"]:
+		var box := StyleBoxFlat.new()
+		box.bg_color = bg.lightened(0.08) if st == "hover" else bg
+		box.set_corner_radius_all(12)
+		box.set_border_width_all(1)
+		box.border_color = border
+		_auto_btn.add_theme_stylebox_override(st, box)
+	_auto_btn.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+
+
+func _layout_controls() -> void:
+	var w := size.x if size.x > 100.0 else 720.0
+	var h := size.y if size.y > 100.0 else 280.0
+	var cy := clampf(h * 0.45, 110.0, 145.0)
+	joy_base.position = Vector2(36.0, cy - joy_base.size.y * 0.5)
+	_rest_joy_pos = joy_base.position + _joy_center
+	if _joy_touch < 0:
+		_active_joy_pos = _rest_joy_pos
+	btn_fire.position = Vector2(w - 200.0, cy - btn_fire.size.y * 0.5 + 10.0)
+	btn_special.position = Vector2(w - 340.0, cy - btn_special.size.y * 0.5 + 30.0)
+	if _auto_btn != null:
+		_auto_btn.position = Vector2(btn_fire.position.x + (btn_fire.size.x - _auto_btn.size.x) * 0.5, maxf(14.0, btn_fire.position.y - 44.0))
+	queue_redraw()
+
+
 func set_special_charge(ratio: float, ready: bool) -> void:
 	_special_ratio = clampf(ratio, 0.0, 1.0)
 	special_fill.anchor_top = 1.0 - _special_ratio
@@ -62,6 +124,8 @@ func set_special_charge(ratio: float, ready: bool) -> void:
 
 func _process(delta: float) -> void:
 	_time += delta
+	if _joy_touch < 0:
+		_active_joy_pos = _active_joy_pos.lerp(_rest_joy_pos, minf(1.0, delta * 14.0))
 	var k := Vector2(
 		float(Input.is_key_pressed(KEY_D)) - float(Input.is_key_pressed(KEY_A)),
 		float(Input.is_key_pressed(KEY_S)) - float(Input.is_key_pressed(KEY_W))
@@ -87,27 +151,27 @@ func _process(delta: float) -> void:
 
 
 func _draw() -> void:
-	# Sleek neon control deck separator
 	draw_line(Vector2(24, 6), Vector2(size.x - 24, 6), Color(1.0, 0.5, 0.22, 0.22), 1.5)
 
-	# 1. Circular joystick base & knob
-	var jc := joy_base.position + _joy_center
+	# 1. Floating circular joystick base & knob
+	var jc := _active_joy_pos
 	var jr := minf(joy_base.size.x, joy_base.size.y) * 0.5
 	var joy_active := _joy_touch >= 0 or move_vec.length() > 0.05
-	draw_circle(jc, jr, Color(0.11, 0.10, 0.17, 0.72))
-	draw_arc(jc, jr, 0.0, TAU, 48, Color(1.0, 0.58, 0.25, 0.65 if joy_active else 0.32), 2.5, true)
+	draw_circle(jc, jr, Color(0.11, 0.10, 0.17, 0.74 if joy_active else 0.56))
+	draw_arc(jc, jr, 0.0, TAU, 48, Color(1.0, 0.58, 0.25, 0.72 if joy_active else 0.32), 2.5, true)
 	draw_arc(jc, jr * 0.45, 0.0, TAU, 28, Color(1.0, 0.58, 0.25, 0.16), 1.2, true)
 	var kc := jc + _joy_knob
-	draw_circle(kc, 33.0, Color(1.0, 0.52, 0.18, 0.28 if joy_active else 0.14))
-	draw_circle(kc, 26.0, Color(1.0, 0.62, 0.25, 0.92 if joy_active else 0.72))
+	draw_circle(kc, 33.0, Color(1.0, 0.52, 0.18, 0.30 if joy_active else 0.14))
+	draw_circle(kc, 26.0, Color(1.0, 0.62, 0.25, 0.94 if joy_active else 0.70))
 	draw_circle(kc, 10.0, Color(1.0, 0.94, 0.75, 0.85))
 
 	# 2. Circular Fire button
 	var fc := btn_fire.position + btn_fire.size * 0.5
 	var fr := minf(btn_fire.size.x, btn_fire.size.y) * 0.5 * (1.06 if fire_held else 1.0)
-	draw_circle(fc, fr + 6.0, Color(1.0, 0.36, 0.16, 0.26 if fire_held else 0.10))
-	draw_circle(fc, fr, Color(0.95, 0.36, 0.18, 0.88 if fire_held else 0.56))
-	draw_arc(fc, fr, 0.0, TAU, 48, Color(1.0, 0.76, 0.42, 0.95 if fire_held else 0.68), 3.0, true)
+	var fire_glow_a := 0.28 if fire_held else (0.18 if auto_fire_active else 0.10)
+	draw_circle(fc, fr + 6.0, Color(1.0, 0.36, 0.16, fire_glow_a))
+	draw_circle(fc, fr, Color(0.95, 0.36, 0.18, 0.88 if fire_held else (0.68 if auto_fire_active else 0.54)))
+	draw_arc(fc, fr, 0.0, TAU, 48, Color(1.0, 0.82, 0.36, 0.95) if (fire_held or auto_fire_active) else Color(1.0, 0.72, 0.42, 0.66), 3.0, true)
 
 	# 3. Circular Special button with radial charge ring
 	var sc := btn_special.position + btn_special.size * 0.5
@@ -130,6 +194,9 @@ func _input(event: InputEvent) -> void:
 	if event is InputEventScreenTouch:
 		var st := event as InputEventScreenTouch
 		var local := _to_local(st.position)
+		if st.pressed and _auto_btn != null and Rect2(_auto_btn.position, _auto_btn.size).grow(8.0).has_point(local):
+			# Let the AutoFireBtn handle its own press cleanly.
+			return
 		var used := false
 		if st.pressed:
 			used = _on_touch_pressed(st.index, local)
@@ -162,6 +229,13 @@ func _on_touch_pressed(index: int, local: Vector2) -> bool:
 		return true
 	if _in_move_zone(local) and _joy_touch < 0:
 		_joy_touch = index
+		# Floating joystick: center snaps right where the left thumb lands (clamped inside left zone).
+		var max_x := maxf(180.0, size.x * 0.42)
+		var max_y := maxf(140.0, size.y - 64.0)
+		_active_joy_pos = Vector2(
+			clampf(local.x, 76.0, max_x),
+			clampf(local.y, 76.0, max_y)
+		)
 		_update_joy(local)
 		return true
 	return false
@@ -221,8 +295,7 @@ func _set_knob(rel: Vector2) -> void:
 
 
 func _in_joy(local: Vector2) -> bool:
-	var c := joy_base.position + joy_base.size * 0.5
-	return local.distance_to(c) <= _max_radius + 40.0
+	return local.distance_to(_rest_joy_pos) <= _max_radius + 42.0
 
 
 func _in_move_zone(local: Vector2) -> bool:
@@ -239,7 +312,6 @@ func _in_control(c: Control, local: Vector2) -> bool:
 
 
 func _update_joy(local: Vector2) -> void:
-	var c := joy_base.position + _joy_center
-	var rel := local - c
+	var rel := local - _active_joy_pos
 	_set_knob(rel)
 	move_vec = (_joy_knob / _max_radius).limit_length(1.0)

@@ -114,13 +114,48 @@ const CATALOG: Array[Dictionary] = [
 	},
 ]
 
+const SYNERGIES: Array[Dictionary] = [
+	{
+		"id": "thunder_blaze",
+		"name": "雷火风暴",
+		"requires": ["multishot", "ricochet"],
+		"desc": "暴击与击杀额外触发链式闪电，电击周围最多 2 名敌人",
+		"color": Color(0.45, 0.85, 1.0),
+	},
+	{
+		"id": "focus_beam",
+		"name": "聚能死光",
+		"requires": ["pierce", "crit"],
+		"desc": "子弹每次穿透后伤害 +1 且必定触发暴击爆发",
+		"color": Color(1.0, 0.88, 0.30),
+	},
+	{
+		"id": "aftershock_nova",
+		"name": "灼烧余震",
+		"requires": ["nova_plus", "charge"],
+		"desc": "必杀释放后在原地留下 3.5 秒烈焰领域持续灼烧敌人",
+		"color": Color(1.0, 0.50, 0.18),
+	},
+	{
+		"id": "aegis_siphon",
+		"name": "圣盾回响",
+		"requires": ["shield", "vampire"],
+		"desc": "护盾碎裂时爆发清弹震荡波，战意虹吸降至 10 杀回血",
+		"color": Color(0.38, 0.96, 0.72),
+	},
+]
+
+var ship: Dictionary = ShipCatalog.SHIPS[0]
 var levels: Dictionary = {}
 var picked_order: Array[String] = []
+var unlocked_synergies: Array[String] = []
 
 
-func reset() -> void:
+func reset(ship_id: String = "vanguard") -> void:
+	ship = ShipCatalog.get_ship(ship_id)
 	levels.clear()
 	picked_order.clear()
+	unlocked_synergies.clear()
 
 
 func level_of(id: String) -> int:
@@ -138,7 +173,57 @@ func apply(id: String) -> Dictionary:
 	levels[id] = cur + 1
 	if not picked_order.has(id):
 		picked_order.append(id)
-	return item
+	var newly_activated: Array[Dictionary] = []
+	for syn in SYNERGIES:
+		var sid := str(syn["id"])
+		if unlocked_synergies.has(sid):
+			continue
+		if _meets_synergy(syn):
+			unlocked_synergies.append(sid)
+			newly_activated.append(syn)
+	var result := item.duplicate()
+	result["new_synergies"] = newly_activated
+	return result
+
+
+func _meets_synergy(syn: Dictionary) -> bool:
+	var reqs: Array = syn["requires"]
+	for req in reqs:
+		if level_of(str(req)) <= 0:
+			return false
+	return true
+
+
+func has_synergy(syn_id: String) -> bool:
+	return unlocked_synergies.has(syn_id)
+
+
+func active_synergies() -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for syn in SYNERGIES:
+		if unlocked_synergies.has(str(syn["id"])):
+			out.append(syn)
+	return out
+
+
+func would_activate_synergies(candidate_id: String) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for syn in SYNERGIES:
+		var sid := str(syn["id"])
+		if unlocked_synergies.has(sid):
+			continue
+		var reqs: Array = syn["requires"]
+		if not reqs.has(candidate_id):
+			continue
+		var ok := true
+		for req in reqs:
+			var rid := str(req)
+			if rid != candidate_id and level_of(rid) <= 0:
+				ok = false
+				break
+		if ok:
+			out.append(syn)
+	return out
 
 
 func find_item(id: String) -> Dictionary:
@@ -148,14 +233,21 @@ func find_item(id: String) -> Dictionary:
 	return {}
 
 
-func roll_choices(count: int = 3, guarantee_epic: bool = false) -> Array[Dictionary]:
+func roll_choices(count: int = 3, guarantee_epic: bool = false, exclude_ids: Array[String] = []) -> Array[Dictionary]:
 	var pool: Array[Dictionary] = []
 	for item in CATALOG:
-		if level_of(str(item["id"])) < int(item["max_level"]):
+		var id := str(item["id"])
+		if level_of(id) < int(item["max_level"]) and not exclude_ids.has(id):
 			pool.append(item)
+	# If excluding previous ids leaves fewer than count, allow the full available pool.
+	if pool.size() < count and not exclude_ids.is_empty():
+		pool.clear()
+		for item in CATALOG:
+			if level_of(str(item["id"])) < int(item["max_level"]):
+				pool.append(item)
+
 	var chosen: Array[Dictionary] = []
 	if pool.is_empty():
-		# Fallback reward when every upgrade is maxed out.
 		return [{
 			"id": "bonus_heal",
 			"name": "满载补给",
@@ -189,11 +281,18 @@ func roll_choices(count: int = 3, guarantee_epic: bool = false) -> Array[Diction
 func _weighted_pick(pool: Array[Dictionary]) -> Dictionary:
 	var total := 0.0
 	for item in pool:
-		total += _rarity_weight(int(item["rarity"]))
+		var w := _rarity_weight(int(item["rarity"]))
+		# Slightly favor upgrades that complete an active synergy!
+		if not would_activate_synergies(str(item["id"])).is_empty():
+			w *= 1.65
+		total += w
 	var roll := randf() * total
 	var acc := 0.0
 	for item in pool:
-		acc += _rarity_weight(int(item["rarity"]))
+		var w := _rarity_weight(int(item["rarity"]))
+		if not would_activate_synergies(str(item["id"])).is_empty():
+			w *= 1.65
+		acc += w
 		if roll <= acc:
 			return item
 	return pool.back()
@@ -202,11 +301,11 @@ func _weighted_pick(pool: Array[Dictionary]) -> Dictionary:
 func _rarity_weight(r: int) -> float:
 	match r:
 		Rarity.EPIC:
-			return 0.65
+			return 0.72
 		Rarity.RARE:
-			return 1.15
+			return 1.18
 		_:
-			return 1.6
+			return 1.55
 
 
 static func rarity_label(r: int) -> String:
@@ -229,12 +328,17 @@ static func rarity_color(r: int) -> Color:
 			return Color(0.68, 0.74, 0.84)
 
 
+func base_max_hp() -> int:
+	return int(ship.get("base_hp", 5)) + level_of("vitality")
+
+
 func projectile_count() -> int:
-	return 1 + level_of("multishot")
+	return int(ship.get("base_projectiles", 1)) + level_of("multishot")
 
 
 func fire_cooldown() -> float:
-	return 0.165 / pow(1.22, float(level_of("fire_rate")))
+	var ship_mult := float(ship.get("fire_rate_mult", 1.0))
+	return (0.165 / maxf(ship_mult, 0.5)) / pow(1.22, float(level_of("fire_rate")))
 
 
 func bullet_damage() -> int:
@@ -242,7 +346,7 @@ func bullet_damage() -> int:
 
 
 func pierce_count() -> int:
-	return level_of("pierce")
+	return int(ship.get("base_pierce", 0)) + level_of("pierce")
 
 
 func ricochet_count() -> int:
@@ -250,23 +354,27 @@ func ricochet_count() -> int:
 
 
 func crit_chance() -> float:
-	return minf(0.75, 0.05 + 0.18 * float(level_of("crit")))
+	var base := float(ship.get("base_crit", 0.05))
+	return minf(0.80, base + 0.18 * float(level_of("crit")))
 
 
 func move_speed() -> float:
-	return 325.0 * (1.0 + 0.14 * float(level_of("speed")))
+	var ship_mult := float(ship.get("speed_mult", 1.0))
+	return 325.0 * ship_mult * (1.0 + 0.14 * float(level_of("speed")))
 
 
 func charge_mult() -> float:
-	return 1.0 + 0.30 * float(level_of("charge"))
+	var ship_mult := float(ship.get("charge_mult", 1.0))
+	return ship_mult * (1.0 + 0.30 * float(level_of("charge")))
 
 
 func pickup_radius() -> float:
-	return 120.0 * (1.0 + 0.35 * float(level_of("charge")))
+	return 125.0 * (1.0 + 0.35 * float(level_of("charge")))
 
 
 func nova_radius_mult() -> float:
-	return 1.0 + 0.25 * float(level_of("nova_plus"))
+	var ship_mult := float(ship.get("nova_mult", 1.0))
+	return ship_mult * (1.0 + 0.25 * float(level_of("nova_plus")))
 
 
 func nova_damage_bonus() -> int:
@@ -285,8 +393,14 @@ func vampire_enabled() -> bool:
 	return level_of("vampire") > 0
 
 
+func vampire_threshold() -> int:
+	return 10 if has_synergy("aegis_siphon") else 15
+
+
 func summary_tags() -> Array[String]:
 	var out: Array[String] = []
+	for syn in active_synergies():
+		out.append("⚡" + str(syn["name"]))
 	for id in picked_order:
 		var item := find_item(id)
 		if item.is_empty():
